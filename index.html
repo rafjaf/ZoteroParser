@@ -282,7 +282,8 @@
           }
         }
         // Display results
-        ["button#save", "button#copy", "div#results"].forEach(el => $(el).style.display = "block");
+        ["button#save", "button#copy"].forEach(el => $(el).style.display = "inline");
+        $("div#results").style.display = "block";
         $("div#results").innerText = JSON.stringify(refCollection, null, "\t");
       }
 
