@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="fr" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="author" content="Rafaël Jafferali">
+    <meta name="version" content="0.1-2020-11-29">
+    <title>Importateur de citations juridiques belges pour Zotero</title>
+    <style>
+      body {height: 95vh;}
+      div#title {height: 10%}
+      div#main {height: 90%;}
+      div#leftpane {
+        width:50%;
+        height: 100%;
+        float: left;
+      }
+      div#pastearea {
+        height: 100px;
+        margin-top: 10px;
+        border-style: solid;
+        border-width: 1px;
+        padding: 2px;
+        overflow: auto;
+      }
+      div.buttoncontainer {text-align: center;}
+      div#console {
+        height: 70%;
+        overflow: auto;
+        margin-top: 20px;
+      }
+      button {margin: 10px}
+      div#rightpane {
+        width:calc(50% - 45px);
+        height: 100%;
+        float:right;
+        margin-left: 20px;
+        padding-left: 20px;
+        border-left-style: solid;
+        border-left-width: 1px;
+      }
+      div#results {
+        display: none;
+        height: 90%;
+        overflow: auto;
+        white-space: pre;
+      }
+      button#save, button#copy {display: none;}
+    </style>
+    <script type="text/javascript">
+      const $ = (el) => document.querySelector(el);
+      const log = (msg) => {
+        $("div#console").innerHTML += `<span>${msg}</span>`;
+        $("div#console").lastElementChild.scrollIntoView({behavior: "smooth"});
+      }
+
+      function analyse() {
+        function analyseAuthor(preTitle, editor) {
+          let authors = [];
+          preTitle.replace(/,+\s*$/g,"").replace(" et ", ",").trim().split(",").forEach(item => {
+            let [surname, ...name] = item.split(" ");
+            if (surname.slice(-1) !== ".") { // Le prénom est en fait un nom
+              name = [].concat(surname, name);
+              surname = "";
+            }
+            if (name.some(s => s.match(/^(de(n|r)?|van)$/i))) {
+              log(`<br><span style='color: orange'><b>Attention, vérifiez si la particule du nom de l'${editor ? "éditeur" : "auteur"} ${name.join(" ")} est en minuscules</b></span>`);
+            }
+            surname = surname.split("-").map(item => item[0] + item.slice(1).toLocaleLowerCase()).join("-")
+              .replace(/\.([a-z])/g, r => r.toLocaleUpperCase());
+            name = name.map(i => {
+              return i.split("-").map(j => {
+                return j[0] + j.slice(1).toLocaleLowerCase();
+              }).join("-");
+            }).join(" ");
+            if ((surname == "X.") && (!name)) {
+              [surname, name] = [name, surname];
+            }
+            let author = {};
+            author["family"] = name;
+            author["given"] = surname;
+            authors.push(author);
+          });
+          return authors;
+        }
+        // Analyse de la référence
+        $("div#console").innerHTML = "";
+        let refCollection = []
+        let dataset = $("div#pastearea").innerText.split(/\n|;/m);
+        log(dataset.length + " références à analyser");
+        for (let i = 0; i < dataset.length; i++) {
+          let ref = {};
+          let data = dataset[i];
+          log(`<br><br><b>Analyse: ${data}</b>`);
+          data = data.replace("“","«").replace("”","»");
+          try {
+            if (data.match(/«.+»/)) { // article de revue ou ouvrage collectif
+              let [, preTitle, title, postTitle] = data.match(/(.+)(«.+»)(.+)/);
+              postTitle = postTitle.split(",").map(el => el.trim());
+              // ===== ARTICLE DE REVUE
+              if (postTitle[2].match(/^\d+/)) {
+                ref["type"] = "article-journal";
+                ref["author"] = analyseAuthor(preTitle);
+                ref["title"] = title.slice(1,-1).trim();
+                if (postTitle[1].match(/^(note|obs\.) sous/)) {
+                  ref["note"] = postTitle.slice(1,3).join(", ");
+                  postTitle.splice(0,2);
+                }
+                ref["container-title"] = postTitle[1];
+                ref["volume"] = postTitle[2];
+                if (postTitle[3].match(/^n°/)) {
+                  postTitle.splice(2,1);
+                }
+                if (postTitle[3].match(/^pp?./)) {
+                  ref["page"] = postTitle[3].match(/\d+/)[0];
+                }
+              }
+              // ===== OUVRAGE COLLECTIF (OU ENCYCLOPEDIE)
+              else {
+                ref["type"] = "chapter";
+                ref["author"] = analyseAuthor(preTitle);
+                ref["title"] = title.slice(1,-1).trim();
+                let i = postTitle.findIndex(item => item.match(/(.+)\([\wé]+\.\)$/)); // direction d'ouvrage ?
+                if (i > -1) { // si direction d'ouvrage
+                  if (postTitle[1].match(/^in\s/)) { // in Editeur (dir.), titre de l'ouvrage
+                    window.postTitle = postTitle;
+                    window.i = i;
+                    postTitle[1] = postTitle[1].slice(3); // retirer le "in"
+                    ref["container-title"] = postTitle[i+1];
+                    let s = postTitle.slice(1, i + 1).join(",").match(/(.+)\([\wé]+\.\)$/)[1];
+                    ref["editor"] = analyseAuthor(s, true);
+                    postTitle.splice(1, i);
+                  }
+                  else { // Titre de l'ouvrage, Editeur (dir.)
+                    ref["container-title"] = postTitle[1];
+                    let s = postTitle.slice(2, i + 1).join(",").match(/(.+)\([\wé]+\.\)$/)[1];
+                    ref["editor"] = analyseAuthor(s, true);
+                    postTitle.splice(2, i - 1);
+                  }
+                }
+                else {
+                  ref["container-title"] = postTitle[1];
+                }
+                if (postTitle[2].match(/^(deel|dos\.|l\.|t\.|v(ol)?\.)\s/)) {
+                  ref["volume"] = postTitle[2].replace("vol.","v.");
+                  postTitle.splice(2, 1);
+                }
+                // Une deuxième fois pour le format t. I, v. I
+                if (postTitle[2].match(/^(deel|dos\.|l\.|t\.|v(ol)?\.)\s/)) {
+                  ref["volume"] += ", " + postTitle[2].replace("vol.","v.");
+                  postTitle.splice(2, 1);
+                }
+                if (postTitle[2] == "f. mob.") {
+                  postTitle.splice(2, 1);
+                }
+                ref["publisher-place"] = postTitle[2];
+                ref["publisher"] = postTitle[3];
+                ref["issued"] = {"date-parts": [[postTitle[4]]]};
+                if (postTitle[5] && postTitle[5].match(/^n°/)) {
+                  postTitle.splice(4,1);
+                }
+                if (postTitle[5] && postTitle[5].match(/^pp?./)) {
+                  ref["page"] = postTitle[5].match(/\d+/)[0];
+                }
+              }
+            }
+            // ===== MONOGRAPHIE
+            else if (data) {
+              // Type de document
+              ref["type"] = "book";
+              let components = data.split(",").map(el => el.trim());
+              // Nom de l'auteur
+              // Détecter le nom de l'auteur - début de la référence en majuscules
+              let preTitle = "", i = 0, editor = false;
+              for (const c of components) {
+                if (c.match(/(.+)\([\wé]+\.\)$/)) { // si direction d'ouvrage
+                  s = c.match(/(.+)\([\wé]+\.\)$/)[1];
+                  editor = true;
+                }
+                else {
+                  s = c;
+                }
+                s = s.replace(" et ", ",");
+                // Vérifier si tout est en majuscules, à l'exclusion éventuellement de la particule
+                if (s.replace(/\s(de(n|r)?|van)\s/ig, p => p.toLocaleUpperCase()) == s.toLocaleUpperCase()) { // if part of authors' names
+                  preTitle += s + ",";
+                  i++;
+                }
+                else {
+                  break;
+                }
+              }
+              ref[editor ? "editor" : "author"] = analyseAuthor(preTitle, editor);
+              components = components.slice(i) // Suppression de l'auteur
+              i = -1;
+              // Page
+              if (components.slice(-1)[0].match(/^n°/)) {
+                components.pop();
+              }
+              if (components.slice(-1)[0].match(/^pp?./)) {
+                ref["page"] = components.slice(-1)[0].match(/\d+/)[0];
+                components.pop();
+              }
+              if (components.slice(-1)[0].match(/^n°/)) { // une deuxième fois car le n° précède parfois la page
+                components.pop();
+              }
+              // Date
+              ref["issued"] = {"date-parts": [[components.slice(-1)[0]]]};
+              components.pop();
+              // Editeur
+              ref["publisher"] = components.slice(-1)[0];
+              components.pop();
+              // Lieu d'édition
+              ref["publisher-place"] = components.slice(-1)[0];
+              components.pop();
+              // N° d'édition
+              if (components.slice(-1)[0].match(/\séd\./)) {
+                if (components.slice(-1)[0].match(/\spar\s/)) {
+                  ref["edition"] = components.slice(-1)[0].split(" par ")[0];
+                  ref["editor"] = analyseAuthor(components.slice(-1)[0].split(" par ")[1], true);
+                }
+                else {
+                  ref["edition"] = components.slice(-1)[0];
+                }
+                components.pop();
+              }
+              // Volume
+              if (components.slice(-1)[0].match(/^(deel|dos\.|l\.|t\.|v(ol)?\.)\s/)) {
+                ref["volume"] = components.slice(-1)[0].replace("vol.","v.");
+                components.pop();
+              }
+              else if (components.slice(-2)[0].match(/^(deel|dos\.|l\.|t\.|v(ol)?\.)\s/)) {
+                // Volume a un titre
+                ref["volume"] = components.slice(-2)[0].replace("vol.","v.");
+                ref["note"] = components.slice(-1)[0];
+                components.pop();
+                components.pop();
+              }
+              // Deuxième test pour le cas où t. I, v. 1
+              if (components.slice(-1)[0].match(/^(deel|dos\.|l\.|t\.|v(ol)?\.)\s/)) {
+                ref["volume"] += ", " + components.slice(-1)[0].replace("vol.","v.");
+                components.pop();
+              }
+              else if (components.slice(-2)[0].match(/^(deel|dos\.|l\.|t\.|v(ol)?\.)\s/)) {
+                // Volume a un titre
+                ref["volume"] += ", " + components.slice(-2)[0].replace("vol.","v.");
+                ref["note"] = components.slice(-1)[0];
+                components.pop();
+                components.pop();
+              }
+              // Titre
+              ref["title"] = components.join(", ");
+            }
+            if (Object.keys(ref).length === 0 && ref.constructor === Object) {
+              throw("Référence vide");
+            }
+            for (const p in ref) {
+              if ( (ref[p] == null) || (ref[p] == undefined) ) {
+                throw("Valeur " + p + " non détectée");
+              }
+            }
+            // Show analysis in console
+            if (ref) {
+              for (let p in ref) {
+                if (p.match(/author|editor/)) {
+                  ref[p].forEach(a => {
+                    log(`<br><span style="color: blue;">${p} given name:</span> ${a.given}`);
+                    log(`<br><span style="color: blue;">${p} family name:</span> ${a.family}`);
+                  });
+                }
+                else if (p == "issued") {
+                  log(`<br><span style="color: blue;">issued:</span> ${ref[p]["date-parts"][0]}`);
+                }
+                else {
+                  log(`<br><span style="color: blue;">${p}:</span> ${ref[p]}`);
+                }
+              }
+              refCollection.push(ref);
+            }
+          }
+          catch(e) {
+            log(` - <span style='color: red'><b>${e}</b></span>`)
+          }
+        }
+        // Display results
+        ["button#save", "button#copy", "div#results"].forEach(el => $(el).style.display = "block");
+        $("div#results").innerText = JSON.stringify(refCollection, null, "\t");
+      }
+
+      function init() {
+        const saveData = (function () {
+          var a = document.createElement("a");
+          document.body.appendChild(a);
+          a.style = "display: none";
+          return function (url, fileName) {
+            a.href = url;
+            a.download = fileName;
+            a.click();
+            window.URL.revokeObjectURL(url);
+          };
+        }());
+        $("button#paste").addEventListener("click", async function(e) {
+          navigator.clipboard.readText().then(text => $("div#pastearea").innerText = text)
+        });
+        $("button#analyse").addEventListener("click", analyse, false);
+        $("button#save").addEventListener("click", function(){
+          let newBlob = new Blob([$("div#results").innerText], {type: "application/json"});
+          const data = window.URL.createObjectURL(newBlob);
+          saveData(data, "ZoteroImport.json");
+        }, false);
+        $("button#copy").addEventListener("click", function(){
+          navigator.clipboard.writeText($("div#results").innerText);
+        }, false);
+        $("button#about").addEventListener("click", function(){
+          log(`<br><br>Version ${Array.from(document.querySelectorAll("meta")).find(el => el.getAttribute("name") == "version").getAttribute("content")}.
+            <br>Programme écrit par <a href="mailto:${"(Rafael.Jafferaliàulb.be)".replace("à","@")}">Rafaël Jafferali</a> et distribué sous la licence <a href="https://creativecommons.org/licenses/by-sa/4.0/legalcode.fr" target="_blank">CC BY-SA 4.0</a>.
+            <br>Tous les commentaires sont les bienvenus.
+            <br>Consultez également le <i><a href="https://legalworld.wolterskluwer.be/media/4562/guide-des-citations-references-abreviations-juridiques.pdf" target="_blank">Guide des citations, références et abréviations juridiques</a></i>
+            ainsi que le <a href="http://www.zotero.org/styles/guide-des-citations-references-et-abreviations-juridiques">style Zotero</a> correspondant.`);
+        }, false);
+      }
+      // Main
+      document.addEventListener("DOMContentLoaded", init);
+    </script>
+  </head>
+  <body>
+    <div id="title">
+      <h1>Importation de références juridiques belges dans Zotero</h1>
+    </div>
+    <div id="main">
+      <div id="leftpane">
+        <span>Veuillez introduire les références doctrinales à importer, séparées par un point-virgule ou un retour à la ligne</span>
+        <div id="pastearea" contenteditable="true"></div>
+        <div class="buttoncontainer">
+          <button id="paste">Coller depuis le presse-papier</button>
+          <button id="analyse">Analyse</button>
+          <button id="about">A propos</button>
+        </div>
+        <div id="console"></div>
+      </div>
+      <div id="rightpane">
+        <div class="buttoncontainer">
+          <button id="save">Télécharger les références</button>
+          <button id="copy">Copier dans le presse-papier</button>
+        </div>
+        <div id="results" contenteditable="true">
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
