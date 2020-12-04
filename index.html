@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="author" content="Rafaël Jafferali">
-    <meta name="version" content="0.1-2020-11-29">
-    <title>Importateur de citations juridiques belges pour Zotero</title>
+    <meta name="version" content="0.1-2020-12-05">
+    <title>Importateur de citations juridiques belges pour Zotero </title>
     <style>
       body {height: 95vh;}
       div#title {height: 10%}
@@ -39,12 +39,17 @@
         border-left-width: 1px;
       }
       div#results {
-        display: none;
+        visibility: hidden;
         height: 90%;
         overflow: auto;
         white-space: pre;
       }
-      button#save, button#copy {display: none;}
+      div#visitors {
+        padding-top: 20px;
+        float: right;
+        font-size: small;
+      }
+      button#save, button#copy {visibility: hidden;}
     </style>
     <script type="text/javascript">
       const $ = (el) => document.querySelector(el);
@@ -282,12 +287,12 @@
           }
         }
         // Display results
-        ["button#save", "button#copy"].forEach(el => $(el).style.display = "inline");
-        $("div#results").style.display = "block";
+        ["button#save", "button#copy", "div#results"].forEach(el => $(el).style.visibility = "visible");
         $("div#results").innerText = JSON.stringify(refCollection, null, "\t");
       }
 
-      function init() {
+      async function init() {
+        // Define saveData
         const saveData = (function () {
           var a = document.createElement("a");
           document.body.appendChild(a);
@@ -299,6 +304,7 @@
             window.URL.revokeObjectURL(url);
           };
         }());
+        // Define buttons
         $("button#paste").addEventListener("click", async function(e) {
           navigator.clipboard.readText().then(text => $("div#pastearea").innerText = text)
         });
@@ -314,10 +320,21 @@
         $("button#about").addEventListener("click", function(){
           log(`<br><br>Version ${Array.from(document.querySelectorAll("meta")).find(el => el.getAttribute("name") == "version").getAttribute("content")}.
             <br>Programme écrit par <a href="mailto:${"(Rafael.Jafferaliàulb.be)".replace("à","@")}">Rafaël Jafferali</a> et distribué sous la licence <a href="https://creativecommons.org/licenses/by-sa/4.0/legalcode.fr" target="_blank">CC BY-SA 4.0</a>.
+            <br>Le code source du programme est disponible sur <a href="https://github.com/rafjaf/ZoteroParser" target="_blank">Github</a> et celui du compteur de visiteurs sur <a href="https://pipedream.com/@rafjaf/visitors-count-p_8rCNNqA/edit" target="_blank">Pipedream</a>.
             <br>Tous les commentaires sont les bienvenus.
             <br>Consultez également le <i><a href="https://legalworld.wolterskluwer.be/media/4562/guide-des-citations-references-abreviations-juridiques.pdf" target="_blank">Guide des citations, références et abréviations juridiques</a></i>
             ainsi que le <a href="http://www.zotero.org/styles/guide-des-citations-references-et-abreviations-juridiques">style Zotero</a> correspondant.`);
         }, false);
+        // Visitors count
+        try {
+          let response = await fetch("https://enq644njmcng36x.m.pipedream.net", {
+            method: "post",
+            body: JSON.stringify({url: window.location.href})
+          });
+          let visitors = (await response.json()).visitors;
+          $("div#visitors").innerText = visitors + " visiteurs"
+        }
+        catch(e) {console.log("Erreur", e)}
       }
       // Main
       document.addEventListener("DOMContentLoaded", init);
@@ -343,8 +360,8 @@
           <button id="save">Télécharger les références</button>
           <button id="copy">Copier dans le presse-papier</button>
         </div>
-        <div id="results" contenteditable="true">
-        </div>
+        <div id="results" contenteditable="true"></div>
+        <div id="visitors"><div>
       </div>
     </div>
   </body>
